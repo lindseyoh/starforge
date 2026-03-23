@@ -383,6 +383,52 @@ header {
   transition:opacity 0.05s;
 }
 
+/* ── locked message ── */
+#locked-msg {
+  position:absolute;
+  bottom:54px; left:50%; transform:translateX(-50%);
+  background:rgba(255,56,96,0.12);
+  border:1px solid var(--red);
+  color:var(--red);
+  font-family:'Share Tech Mono',monospace;
+  font-size:0.75rem;
+  padding:7px 16px;
+  letter-spacing:0.08em;
+  pointer-events:none;
+  opacity:0;
+  z-index:91;
+  white-space:nowrap;
+  transition:opacity 0.2s;
+}
+#locked-msg.show { opacity:1; }
+
+/* ── objective bar ── */
+#objective-bar {
+  padding:9px 14px;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.obj-label {
+  font-family:'Press Start 2P',monospace;
+  font-size:0.38rem;
+  color:var(--muted);
+  letter-spacing:0.15em;
+  margin-bottom:4px;
+}
+#obj-text {
+  font-family:'Share Tech Mono',monospace;
+  font-size:0.75rem;
+  color:var(--amber);
+  line-height:1.4;
+}
+
+/* ── purple log entry color ── */
+.log-entry.purple                { border-left-color:var(--purple); }
+.log-entry.purple .log-item      { color:var(--purple); }
+/* muted color for day notes */
+.log-entry.muted                 { border-left-color:var(--muted); }
+.log-entry.muted .log-item       { color:var(--muted); }
+
 /* ═══════════════════════════════ SIDEBAR (right) ═══ */
 #sidebar {
   width:228px;
@@ -753,6 +799,10 @@ header {
       <div class="log-title">// SURVIVOR LOG</div>
       <div class="log-subtitle">Personal notes, day by day.</div>
     </div>
+    <div id="objective-bar">
+      <div class="obj-label">// CURRENT OBJECTIVE</div>
+      <div id="obj-text">—</div>
+    </div>
     <div id="log-entries"></div>
     <div id="chain-panel">
       <div class="chain-label">ESCAPE CHAIN:</div>
@@ -772,6 +822,7 @@ header {
       <span class="trash-lbl">JETTISON</span>
     </div>
     <div id="merge-flash"></div>
+    <div id="locked-msg">🔒 LOCKED</div>
   </div>
 
   <!-- SIDEBAR -->
@@ -1005,6 +1056,52 @@ const LOGS = {
 const CHAIN = ['shelter','habitat','beacon','engine','launch_pad','escape_ship'];
 
 // ═══════════════════════════════════════════════
+// STAGE GATES
+// Stage 0 → craft shelter  → stage 1
+// Stage 1 → craft habitat  → stage 2
+// Stage 2 → craft beacon   → stage 3
+// ═══════════════════════════════════════════════
+// Items whose recipe requires a minimum stage to attempt:
+const RECIPE_STAGES = {
+  // stage 1 — need Shelter first
+  radio:1, solar:1, processor:1, oxygen_gen:1,
+  thruster:1, sensor:1, medkit:1, drill:1, water_rec:1, habitat:1,
+  // stage 2 — need Habitat
+  computer:2, beacon:2, power_grid:2, fabricator:2,
+  nav_system:2, engine:2, armor:2,
+  // stage 3 — need Beacon
+  launch_pad:3, escape_ship:3, beacon_sat:3,
+};
+
+// Items that advance the stage when crafted:
+const STAGE_GATES = { shelter:1, habitat:2, beacon:3 };
+
+// Current stage objective text (index = stage number):
+const STAGE_OBJECTIVES = [
+  'SURVIVE — Build a shelter before the cold takes you.',
+  'ESTABLISH — Build a pressurised habitat. Make this place livable.',
+  'SIGNAL — Broadcast a distress beacon. Someone has to be listening.',
+  'ESCAPE — Build the ship. Get off this rock.',
+];
+
+// Log entries injected on stage advance (index = new stage number):
+const STAGE_LOG = [
+  null,
+  { color:'purple', title:'CHAPTER II — ESTABLISH', text:'Shelter standing. Now build something permanent. Pressurise it. You can\'t live in a tent forever.' },
+  { color:'purple', title:'CHAPTER III — SIGNAL',   text:'Base stable. Next: make noise. If anyone is within signal range, a beacon will find them.' },
+  { color:'purple', title:'CHAPTER IV — ESCAPE',    text:'Signal is out. Nothing left but to build the ship and burn for orbit. Don\'t look back.' },
+];
+
+// Day-milestone survivor notes (triggered when dayCount reaches key):
+const DAY_NOTES = {
+  3:  { color:'muted', title:'NOTE — DAY 003', text:'Every joint aches. The cold doesn\'t help. Keep moving.' },
+  7:  { color:'muted', title:'NOTE — DAY 007', text:'Seven days. I didn\'t think I\'d make it this far.' },
+  12: { color:'muted', title:'NOTE — DAY 012', text:'Starting to feel less like a crash survivor and more like an engineer.' },
+  18: { color:'muted', title:'NOTE — DAY 018', text:'Lost track of time for a bit. The work keeps me sane.' },
+  25: { color:'muted', title:'NOTE — DAY 025', text:'I built all of this from nothing. That has to count for something.' },
+};
+
+// ═══════════════════════════════════════════════
 // HINTS  (one per undiscovered combo, safe-to-reveal)
 // ═══════════════════════════════════════════════
 const HINTS = [
@@ -1160,6 +1257,25 @@ let nextId  = 1;
 let hintCharges = 5;
 let dayCount = 1;
 let toastTimer = null;
+let currentStage = 0;
+let lockedMsgTimer = null;
+
+function setObjective(stage){
+  document.getElementById('obj-text').textContent = STAGE_OBJECTIVES[stage] || '—';
+}
+
+function advanceStage(newStage){
+  if(newStage <= currentStage) return;
+  currentStage = newStage;
+  setObjective(newStage);
+  const entry = STAGE_LOG[newStage];
+  if(entry) setTimeout(() => addLogEntry(entry.color, entry.title, entry.text), 600);
+}
+
+function checkDayMilestone(day){
+  const note = DAY_NOTES[day];
+  if(note) setTimeout(() => addLogEntry(note.color, note.title, note.text), 800);
+}
 
 function resetGame(){
   discovered = new Set(['metal','energy','carbon','oxygen']);
@@ -1167,6 +1283,7 @@ function resetGame(){
   document.querySelectorAll('.forge-chip').forEach(e=>e.remove());
   hintCharges = 5;
   dayCount = 1;
+  currentStage = 0;
   document.getElementById('day-count').textContent = '001';
   document.getElementById('log-entries').innerHTML = '';
   document.getElementById('win-screen').classList.remove('open');
@@ -1175,7 +1292,8 @@ function resetGame(){
   updateChain();
   showForgeHint(true);
   showBoot(() => {
-    addLogEntry('cyan','SYSTEM BOOT','Emergency systems online. Crash site secured. Begin salvage.');
+    setObjective(0);
+    addLogEntry('cyan','CHAPTER I — SURVIVE','Ship destroyed on impact. Location unknown. Survivors: 1. You\'re exposed — build shelter before the cold kills you.');
     addLogEntry('amber','INVENTORY CHECK','Found: Scrap Metal, Energy Cells, Carbon deposits, Oxygen canisters. Start crafting.');
   });
 }
@@ -1342,6 +1460,14 @@ function startForgeDrag(e, div, already=false){
 // ═══════════════════════════════════════════════
 // COMBINE LOGIC
 // ═══════════════════════════════════════════════
+function showLockedMsg(text){
+  const el = document.getElementById('locked-msg');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(lockedMsgTimer);
+  lockedMsgTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
 function checkCombine(div){
   const all = document.getElementById('forge').querySelectorAll('.forge-chip');
   const r1  = div.getBoundingClientRect();
@@ -1351,6 +1477,12 @@ function checkCombine(div){
     if(rectsOverlap(r1,r2)){
       const result = RECIPE_MAP[rKey(div.dataset.key, other.dataset.key)];
       if(result && ITEMS[result]){
+        const reqStage = RECIPE_STAGES[result] || 0;
+        if(reqStage > currentStage){
+          const needed = ['a Shelter','a Habitat','a Beacon'][reqStage - 1];
+          showLockedMsg(`🔒 LOCKED — Build ${needed} first`);
+          return;
+        }
         doCombine(div, other, result);
         return;
       }
@@ -1391,6 +1523,10 @@ function doCombine(d1, d2, result){
       updateChain();
       const log = LOGS[result];
       if(log) addLogEntry(log.color, ITEMS[result].name.toUpperCase(), log.text);
+      // Stage advance
+      if(STAGE_GATES[result] !== undefined) advanceStage(STAGE_GATES[result]);
+      // Day milestones
+      checkDayMilestone(dayCount);
       if(CUTSCENES[result]){
         showCutscene(result);
       } else {
